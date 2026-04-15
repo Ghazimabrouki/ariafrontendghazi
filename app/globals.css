@@ -546,3 +546,187 @@
 .status-dot.running::after {
   background: oklch(0.72 0.2 200 / 0.5);
 }
+
+/* IPS Attack Map Animations */
+@keyframes attack-dash {
+  0% {
+    stroke-dashoffset: 24;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes marker-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+
+@keyframes marker-glow {
+  0%, 100% {
+    filter: drop-shadow(0 0 3px currentColor);
+  }
+  50% {
+    filter: drop-shadow(0 0 8px currentColor);
+  }
+}
+
+@keyframes attack-path-flow {
+  0% {
+    stroke-dashoffset: 100;
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.8;
+  }
+  90% {
+    opacity: 0.8;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0.4;
+  }
+}
+
+@keyframes particle-travel {
+  0% {
+    offset-distance: 0%;
+    opacity: 1;
+  }
+  100% {
+    offset-distance: 100%;
+    opacity: 0.3;
+  }
+}
+
+.animate-attack-dash {
+  animation: attack-dash 1.5s linear infinite;
+}
+
+.animate-marker-pulse {
+  animation: marker-pulse 2s ease-out infinite;
+}
+
+.animate-marker-glow {
+  animation: marker-glow 2s ease-in-out infinite;
+}
+
+.animate-attack-path-flow {
+  animation: attack-path-flow 3s ease-out forwards;
+}
+
+/* Severity-specific glows for map markers */
+.glow-critical-marker {
+  filter: drop-shadow(0 0 6px #ef4444) drop-shadow(0 0 12px #ef444480);
+}
+
+.glow-high-marker {
+  filter: drop-shadow(0 0 5px #f97316) drop-shadow(0 0 10px #f9731680);
+}
+
+.glow-medium-marker {
+  filter: drop-shadow(0 0 4px #eab308) drop-shadow(0 0 8px #eab30880);
+}
+
+.glow-low-marker {
+  filter: drop-shadow(0 0 3px #3b82f6) drop-shadow(0 0 6px #3b82f680);
+}
+
+/* Table row new event animation */
+@keyframes new-event-highlight {
+  0% {
+    background-color: oklch(0.72 0.2 200 / 0.2);
+    border-color: oklch(0.72 0.2 200 / 0.5);
+  }
+  100% {
+    background-color: transparent;
+    border-color: var(--border);
+  }
+}
+
+.animate-new-event {
+  animation: new-event-highlight 2s ease-out forwards;
+}
+
+/* Stat card number bounce */
+@keyframes stat-bounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  25% {
+    transform: translateY(-4px);
+  }
+  75% {
+    transform: translateY(2px);
+  }
+}
+
+.animate-stat-bounce {
+  animation: stat-bounce 0.5s ease-out;
+}
+
+/* Map container scan effect */
+@keyframes map-scan {
+  0% {
+    background-position: 0% 0%;
+  }
+  100% {
+    background-position: 0% 100%;
+  }
+}
+
+.map-scan-effect::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    oklch(0.72 0.2 200 / 0.05) 50%,
+    transparent 100%
+  );
+  background-size: 100% 200%;
+  animation: map-scan 4s linear infinite;
+  pointer-events: none;
+}
+
+/* Radar sweep effect for destination */
+@keyframes radar-sweep {
+  0% {
+    transform: rotate(0deg);
+    opacity: 0.6;
+  }
+  100% {
+    transform: rotate(360deg);
+    opacity: 0.6;
+  }
+}
+
+.animate-radar-sweep {
+  animation: radar-sweep 4s linear infinite;
+}
+
+/* Connection line drawing animation */
+@keyframes draw-line {
+  0% {
+    stroke-dashoffset: 1000;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+.animate-draw-line {
+  stroke-dasharray: 1000;
+  animation: draw-line 2s ease-out forwards;
+}

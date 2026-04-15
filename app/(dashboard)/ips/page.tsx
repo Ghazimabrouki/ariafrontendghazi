@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import useSWR from "swr";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -15,6 +15,8 @@ import {
   ChevronRight,
   AlertTriangle,
   Shield,
+  Zap,
+  Target,
 } from "lucide-react";
 import {
   ComposableMap,
@@ -30,6 +32,7 @@ import {
   type IPSStatisticsResponse,
   type IPSSummaryResponse,
   type IPSFiltersResponse,
+  type IPSPath,
 } from "@/lib/api";
 import { useWSSubscription, type WSMessage } from "@/lib/websocket";
 import { PageHeader } from "@/components/page-header";
@@ -46,6 +49,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
+import { AnimatedCounter } from "@/components/animated-counter";
 
 const geoUrl = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
 
@@ -159,10 +163,17 @@ const mockSummary: IPSSummaryResponse = {
 };
 
 const severityColors: Record<string, string> = {
-  critical: "#EF4444",
-  high: "#F97316",
-  medium: "#EAB308",
-  low: "#3B82F6",
+  critical: "#ef4444",
+  high: "#f97316",
+  medium: "#eab308",
+  low: "#3b82f6",
+};
+
+const severityGlowColors: Record<string, string> = {
+  critical: "rgba(239, 68, 68, 0.6)",
+  high: "rgba(249, 115, 22, 0.5)",
+  medium: "rgba(234, 179, 8, 0.4)",
+  low: "rgba(59, 130, 246, 0.4)",
 };
 
 const countryNames: Record<string, string> = {
@@ -178,12 +189,166 @@ const countryNames: Record<string, string> = {
   KR: "South Korea",
 };
 
+// Animated attack line component
+function AnimatedAttackPath({ 
+  path, 
+  index,
+  isNew 
+}: { 
+  path: IPSPath; 
+  index: number;
+  isNew?: boolean;
+}) {
+  const color = severityColors[path.severity] || severityColors.medium;
+  const glowColor = severityGlowColors[path.severity] || severityGlowColors.medium;
+  const animationDelay = index * 0.15;
+  
+  // Calculate curved path control point for bezier
+  const midLon = (path.from.lon + path.to.lon) / 2;
+  const midLat = (path.from.lat + path.to.lat) / 2;
+  // Curve upward for visual effect
+  const curveOffset = Math.abs(path.from.lon - path.to.lon) * 0.15;
+  const controlLat = midLat + curveOffset;
+
+  return (
+    <g className={cn(isNew && "animate-fade-in")} style={{ animationDelay: `${animationDelay}s` }}>
+      {/* Glow effect line */}
+      <Line
+        from={[path.from.lon, path.from.lat]}
+        to={[path.to.lon, path.to.lat]}
+        stroke={glowColor}
+        strokeWidth={4}
+        strokeLinecap="round"
+        style={{ filter: "blur(3px)" }}
+      />
+      {/* Main line */}
+      <Line
+        from={[path.from.lon, path.from.lat]}
+        to={[path.to.lon, path.to.lat]}
+        stroke={color}
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        strokeDasharray="8,4"
+        className="animate-attack-dash"
+        style={{
+          animationDelay: `${animationDelay}s`,
+        }}
+      />
+    </g>
+  );
+}
+
+// Animated marker with pulse effect
+function AnimatedMarker({ 
+  coordinates, 
+  severity, 
+  isSource,
+  isNew,
+  city,
+  country,
+}: { 
+  coordinates: [number, number]; 
+  severity: string;
+  isSource: boolean;
+  isNew?: boolean;
+  city?: string;
+  country?: string;
+}) {
+  const color = severityColors[severity] || severityColors.medium;
+  const glowColor = severityGlowColors[severity] || severityGlowColors.medium;
+  
+  return (
+    <Marker coordinates={coordinates}>
+      <g className={cn(isNew && "animate-scale-in")}>
+        {/* Outer pulse ring for critical/high */}
+        {(severity === "critical" || severity === "high") && (
+          <circle
+            r={isSource ? 12 : 18}
+            fill="none"
+            stroke={color}
+            strokeWidth={1.5}
+            className="animate-marker-pulse"
+            style={{ transformOrigin: "center" }}
+          />
+        )}
+        {/* Glow circle */}
+        <circle
+          r={isSource ? 6 : 10}
+          fill={glowColor}
+          style={{ filter: "blur(4px)" }}
+        />
+        {/* Main circle */}
+        <circle
+          r={isSource ? 4 : 8}
+          fill={isSource ? color : "var(--primary)"}
+          stroke={isSource ? "rgba(255,255,255,0.3)" : "white"}
+          strokeWidth={isSource ? 1 : 2}
+        />
+        {/* Inner dot for destination */}
+        {!isSource && (
+          <circle
+            r={3}
+            fill="white"
+            className="animate-pulse"
+          />
+        )}
+      </g>
+    </Marker>
+  );
+}
+
+// Stats card with animated counter
+function StatSummaryCard({ 
+  value, 
+  label, 
+  color,
+  icon: Icon,
+}: { 
+  value: number; 
+  label: string; 
+  color?: string;
+  icon?: React.ElementType;
+}) {
+  return (
+    <Card className={cn(
+      "relative overflow-hidden transition-all duration-300 hover-lift",
+      color && `border-${color}/30`
+    )}>
+      <div className={cn(
+        "absolute inset-0 opacity-10",
+        color && `bg-gradient-to-br from-${color} to-transparent`
+      )} />
+      <CardContent className="pt-4 pb-4">
+        <div className="flex items-center justify-between">
+          <div className="flex flex-col">
+            <AnimatedCounter
+              value={value}
+              className={cn("text-2xl font-bold", color && `text-${color}`)}
+              duration={800}
+            />
+            <span className="text-xs text-muted-foreground">{label}</span>
+          </div>
+          {Icon && (
+            <div className={cn(
+              "h-8 w-8 rounded-lg flex items-center justify-center",
+              color ? `bg-${color}/10 text-${color}` : "bg-primary/10 text-primary"
+            )}>
+              <Icon className="h-4 w-4" />
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function IPSMapPage() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [refreshInterval, setRefreshInterval] = useState(10);
   const [severityFilter, setSeverityFilter] = useState("all");
   const [countryFilter, setCountryFilter] = useState("all");
   const [protocolFilter, setProtocolFilter] = useState("all");
+  const [newEventIds, setNewEventIds] = useState<Set<string>>(new Set());
 
   const { data: mapData, mutate: mutateMapData, isLoading: mapLoading } = useSWR<IPSMapDataResponse>(
     ["ips-map-data", severityFilter],
@@ -228,6 +393,17 @@ export default function IPSMapPage() {
 
   const handleWSUpdate = useCallback(
     (message: WSMessage) => {
+      // Track new events for animation
+      if (message.data?.event_id) {
+        setNewEventIds(prev => new Set(prev).add(message.data.event_id));
+        setTimeout(() => {
+          setNewEventIds(prev => {
+            const next = new Set(prev);
+            next.delete(message.data.event_id);
+            return next;
+          });
+        }, 2000);
+      }
       mutateMapData();
       mutateLiveEvents();
       mutateStatistics();
@@ -242,12 +418,20 @@ export default function IPSMapPage() {
   const stats = statistics || mockStatistics;
   const summaryData = summary || mockSummary;
 
-  const filteredEvents = events.filter((e) => {
+  const filteredEvents = useMemo(() => events.filter((e) => {
     if (severityFilter !== "all" && e.severity !== severityFilter) return false;
     if (countryFilter !== "all" && e.source_country_code !== countryFilter) return false;
     if (protocolFilter !== "all" && e.protocol !== protocolFilter) return false;
     return true;
-  });
+  }), [events, severityFilter, countryFilter, protocolFilter]);
+
+  const filteredPaths = useMemo(() => {
+    let filtered = paths;
+    if (severityFilter !== "all") {
+      filtered = filtered.filter(p => p.severity === severityFilter);
+    }
+    return filtered.slice(0, 15);
+  }, [paths, severityFilter]);
 
   const handleRefresh = () => {
     mutateMapData();
@@ -262,6 +446,17 @@ export default function IPSMapPage() {
   };
 
   const hasFilters = severityFilter !== "all" || countryFilter !== "all" || protocolFilter !== "all";
+
+  // Unique source markers
+  const uniqueSources = useMemo(() => {
+    const seen = new Set<string>();
+    return filteredPaths.filter(p => {
+      const key = `${p.from.lat}-${p.from.lon}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [filteredPaths]);
 
   return (
     <div className="flex flex-col h-full">
@@ -334,8 +529,15 @@ export default function IPSMapPage() {
               variant={autoRefresh ? "default" : "outline"}
               size="icon"
               onClick={() => setAutoRefresh(!autoRefresh)}
+              className="relative"
             >
               {autoRefresh ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+              {autoRefresh && (
+                <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-success"></span>
+                </span>
+              )}
             </Button>
           </div>
         }
@@ -343,60 +545,91 @@ export default function IPSMapPage() {
 
       <div className="flex-1 p-6 space-y-6 overflow-auto">
         {/* Summary Cards */}
-        <div className="grid gap-4 md:grid-cols-4 lg:grid-cols-7">
-          <Card>
-            <CardContent className="pt-4">
-              <div className="flex flex-col items-center">
-                <span className="text-2xl font-bold">{summaryData.total.toLocaleString()}</span>
-                <span className="text-xs text-muted-foreground">Total Attacks</span>
+        <div className="grid gap-4 md:grid-cols-4 lg:grid-cols-7 stagger-children">
+          <StatSummaryCard 
+            value={summaryData.total} 
+            label="Total Attacks"
+            icon={Globe}
+          />
+          <StatSummaryCard 
+            value={summaryData.active} 
+            label="Active Events"
+            icon={Activity}
+          />
+          <StatSummaryCard 
+            value={summaryData.unique_sources} 
+            label="Unique Sources"
+            icon={Target}
+          />
+          <Card className="border-destructive/30 relative overflow-hidden hover-lift transition-all">
+            <div className="absolute inset-0 bg-gradient-to-br from-destructive/10 to-transparent" />
+            <CardContent className="pt-4 pb-4 relative">
+              <div className="flex items-center justify-between">
+                <div>
+                  <AnimatedCounter
+                    value={summaryData.critical}
+                    className="text-2xl font-bold text-destructive"
+                    duration={800}
+                  />
+                  <span className="text-xs text-muted-foreground">Critical</span>
+                </div>
+                <div className="h-8 w-8 rounded-lg bg-destructive/10 flex items-center justify-center">
+                  <AlertTriangle className="h-4 w-4 text-destructive" />
+                </div>
               </div>
             </CardContent>
           </Card>
-          <Card>
-            <CardContent className="pt-4">
-              <div className="flex flex-col items-center">
-                <span className="text-2xl font-bold">{summaryData.active}</span>
-                <span className="text-xs text-muted-foreground">Active Events</span>
+          <Card className="border-orange-500/30 relative overflow-hidden hover-lift transition-all">
+            <div className="absolute inset-0 bg-gradient-to-br from-orange-500/10 to-transparent" />
+            <CardContent className="pt-4 pb-4 relative">
+              <div className="flex items-center justify-between">
+                <div>
+                  <AnimatedCounter
+                    value={summaryData.high}
+                    className="text-2xl font-bold text-orange-500"
+                    duration={800}
+                  />
+                  <span className="text-xs text-muted-foreground">High</span>
+                </div>
+                <div className="h-8 w-8 rounded-lg bg-orange-500/10 flex items-center justify-center">
+                  <Zap className="h-4 w-4 text-orange-500" />
+                </div>
               </div>
             </CardContent>
           </Card>
-          <Card>
-            <CardContent className="pt-4">
-              <div className="flex flex-col items-center">
-                <span className="text-2xl font-bold">{summaryData.unique_sources}</span>
-                <span className="text-xs text-muted-foreground">Unique Sources</span>
+          <Card className="border-yellow-500/30 relative overflow-hidden hover-lift transition-all">
+            <div className="absolute inset-0 bg-gradient-to-br from-yellow-500/10 to-transparent" />
+            <CardContent className="pt-4 pb-4 relative">
+              <div className="flex items-center justify-between">
+                <div>
+                  <AnimatedCounter
+                    value={summaryData.medium}
+                    className="text-2xl font-bold text-yellow-500"
+                    duration={800}
+                  />
+                  <span className="text-xs text-muted-foreground">Medium</span>
+                </div>
+                <div className="h-8 w-8 rounded-lg bg-yellow-500/10 flex items-center justify-center">
+                  <Shield className="h-4 w-4 text-yellow-500" />
+                </div>
               </div>
             </CardContent>
           </Card>
-          <Card className="border-destructive/50">
-            <CardContent className="pt-4">
-              <div className="flex flex-col items-center">
-                <span className="text-2xl font-bold text-destructive">{summaryData.critical}</span>
-                <span className="text-xs text-muted-foreground">Critical</span>
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="border-orange-500/50">
-            <CardContent className="pt-4">
-              <div className="flex flex-col items-center">
-                <span className="text-2xl font-bold text-orange-500">{summaryData.high}</span>
-                <span className="text-xs text-muted-foreground">High</span>
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="border-yellow-500/50">
-            <CardContent className="pt-4">
-              <div className="flex flex-col items-center">
-                <span className="text-2xl font-bold text-yellow-500">{summaryData.medium}</span>
-                <span className="text-xs text-muted-foreground">Medium</span>
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="border-blue-500/50">
-            <CardContent className="pt-4">
-              <div className="flex flex-col items-center">
-                <span className="text-2xl font-bold text-blue-500">{summaryData.low}</span>
-                <span className="text-xs text-muted-foreground">Low</span>
+          <Card className="border-blue-500/30 relative overflow-hidden hover-lift transition-all">
+            <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-transparent" />
+            <CardContent className="pt-4 pb-4 relative">
+              <div className="flex items-center justify-between">
+                <div>
+                  <AnimatedCounter
+                    value={summaryData.low}
+                    className="text-2xl font-bold text-blue-500"
+                    duration={800}
+                  />
+                  <span className="text-xs text-muted-foreground">Low</span>
+                </div>
+                <div className="h-8 w-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                  <Server className="h-4 w-4 text-blue-500" />
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -405,20 +638,61 @@ export default function IPSMapPage() {
         {/* Map and Stats */}
         <div className="grid gap-6 lg:grid-cols-3">
           {/* World Map */}
-          <Card className="lg:col-span-2">
+          <Card className="lg:col-span-2 relative overflow-hidden">
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-base font-medium">
                 <Globe className="h-4 w-4" />
                 Attack Map
+                <div className="ml-auto flex items-center gap-2">
+                  {autoRefresh && (
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-success"></span>
+                      </span>
+                      Live
+                    </div>
+                  )}
+                </div>
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-[400px] bg-muted/20 rounded-lg overflow-hidden">
+              <div className="h-[420px] bg-gradient-to-b from-muted/30 to-muted/10 rounded-lg overflow-hidden relative">
+                {/* Subtle grid overlay */}
+                <div 
+                  className="absolute inset-0 pointer-events-none opacity-5"
+                  style={{
+                    backgroundImage: `
+                      linear-gradient(to right, var(--border) 1px, transparent 1px),
+                      linear-gradient(to bottom, var(--border) 1px, transparent 1px)
+                    `,
+                    backgroundSize: "40px 40px"
+                  }}
+                />
+                
                 <ComposableMap
                   projection="geoMercator"
-                  projectionConfig={{ scale: 120, center: [20, 30] }}
+                  projectionConfig={{ scale: 130, center: [20, 25] }}
                   style={{ width: "100%", height: "100%" }}
                 >
+                  <defs>
+                    {/* Glow filters for each severity */}
+                    <filter id="glow-critical" x="-50%" y="-50%" width="200%" height="200%">
+                      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                      <feMerge>
+                        <feMergeNode in="coloredBlur"/>
+                        <feMergeNode in="SourceGraphic"/>
+                      </feMerge>
+                    </filter>
+                    <filter id="glow-high" x="-50%" y="-50%" width="200%" height="200%">
+                      <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
+                      <feMerge>
+                        <feMergeNode in="coloredBlur"/>
+                        <feMergeNode in="SourceGraphic"/>
+                      </feMerge>
+                    </filter>
+                  </defs>
+                  
                   <Geographies geography={geoUrl}>
                     {({ geographies }) =>
                       geographies.map((geo) => (
@@ -437,42 +711,56 @@ export default function IPSMapPage() {
                       ))
                     }
                   </Geographies>
-                  {/* Attack paths */}
-                  {paths.slice(0, 15).map((path, i) => (
-                    <Line
-                      key={path.id}
-                      from={[path.from.lon, path.from.lat]}
-                      to={[path.to.lon, path.to.lat]}
-                      stroke={severityColors[path.severity] || severityColors.medium}
-                      strokeWidth={1.5}
-                      strokeLinecap="round"
-                      style={{
-                        opacity: 0.6,
-                      }}
+                  
+                  {/* Attack paths with animation */}
+                  {filteredPaths.map((path, i) => (
+                    <AnimatedAttackPath 
+                      key={path.id} 
+                      path={path} 
+                      index={i}
+                      isNew={newEventIds.has(path.id)}
                     />
                   ))}
+                  
                   {/* Source markers */}
-                  {paths.slice(0, 15).map((path) => (
-                    <Marker key={`src-${path.id}`} coordinates={[path.from.lon, path.from.lat]}>
-                      <circle
-                        r={4}
-                        fill={severityColors[path.severity] || severityColors.medium}
-                        opacity={0.8}
-                      />
-                    </Marker>
+                  {uniqueSources.map((path) => (
+                    <AnimatedMarker
+                      key={`src-${path.id}`}
+                      coordinates={[path.from.lon, path.from.lat]}
+                      severity={path.severity}
+                      isSource={true}
+                      isNew={newEventIds.has(path.id)}
+                      city={path.from.city}
+                      country={path.from.country}
+                    />
                   ))}
-                  {/* Destination marker (Tunisia) */}
-                  <Marker coordinates={[10.1815, 36.8065]}>
-                    <circle r={6} fill="var(--primary)" stroke="white" strokeWidth={2} />
-                  </Marker>
+                  
+                  {/* Destination marker (Tunisia - main target) */}
+                  <AnimatedMarker
+                    coordinates={[10.1815, 36.8065]}
+                    severity="critical"
+                    isSource={false}
+                    city="Tunis"
+                    country="Tunisia"
+                  />
                 </ComposableMap>
               </div>
+              
               {/* Legend */}
-              <div className="flex items-center justify-center gap-6 mt-4">
+              <div className="flex items-center justify-center gap-6 mt-4 pt-4 border-t border-border/50">
                 {Object.entries(severityColors).map(([sev, color]) => (
-                  <div key={sev} className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
-                    <span className="text-xs capitalize">{sev}</span>
+                  <div key={sev} className="flex items-center gap-2 group cursor-pointer" onClick={() => setSeverityFilter(sev)}>
+                    <div 
+                      className={cn(
+                        "w-3 h-3 rounded-full transition-transform group-hover:scale-125",
+                        severityFilter === sev && "ring-2 ring-offset-2 ring-offset-background"
+                      )} 
+                      style={{ backgroundColor: color, boxShadow: `0 0 8px ${color}40` }} 
+                    />
+                    <span className={cn(
+                      "text-xs capitalize transition-colors",
+                      severityFilter === sev ? "text-foreground font-medium" : "text-muted-foreground"
+                    )}>{sev}</span>
                   </div>
                 ))}
               </div>
@@ -487,20 +775,25 @@ export default function IPSMapPage() {
                 Statistics
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-5">
               {/* Top Countries */}
               <div>
-                <p className="text-sm font-medium mb-2">Top Countries</p>
-                <div className="space-y-2">
-                  {stats.top_countries.slice(0, 5).map((c) => {
+                <p className="text-sm font-medium mb-3">Top Attack Sources</p>
+                <div className="space-y-3">
+                  {stats.top_countries.slice(0, 5).map((c, i) => {
                     const percent = (c.count / stats.total_attacks) * 100;
                     return (
-                      <div key={c.code} className="space-y-1">
+                      <div key={c.code} className="space-y-1.5 animate-slide-up" style={{ animationDelay: `${i * 50}ms` }}>
                         <div className="flex items-center justify-between text-sm">
-                          <span>{countryNames[c.code] || c.code}</span>
-                          <span className="text-muted-foreground">{c.count}</span>
+                          <span className="flex items-center gap-2">
+                            <span className="text-muted-foreground w-4 text-xs">{i + 1}.</span>
+                            {countryNames[c.code] || c.code}
+                          </span>
+                          <span className="text-muted-foreground font-mono text-xs">{c.count.toLocaleString()}</span>
                         </div>
-                        <Progress value={percent} className="h-1.5" />
+                        <div className="relative">
+                          <Progress value={percent} className="h-2" />
+                        </div>
                       </div>
                     );
                   })}
@@ -509,12 +802,16 @@ export default function IPSMapPage() {
 
               {/* By Category */}
               <div>
-                <p className="text-sm font-medium mb-2">By Category</p>
+                <p className="text-sm font-medium mb-3">Attack Categories</p>
                 <div className="space-y-2">
-                  {stats.by_category.slice(0, 4).map((c) => (
-                    <div key={c.category} className="flex items-center justify-between text-sm">
-                      <span className="truncate max-w-[180px]">{c.category}</span>
-                      <Badge variant="secondary">{c.count}</Badge>
+                  {stats.by_category.slice(0, 4).map((c, i) => (
+                    <div 
+                      key={c.category} 
+                      className="flex items-center justify-between text-sm p-2 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors animate-slide-up"
+                      style={{ animationDelay: `${(i + 5) * 50}ms` }}
+                    >
+                      <span className="truncate max-w-[160px] text-muted-foreground">{c.category}</span>
+                      <Badge variant="secondary" className="font-mono">{c.count}</Badge>
                     </div>
                   ))}
                 </div>
@@ -522,11 +819,17 @@ export default function IPSMapPage() {
 
               {/* By Protocol */}
               <div>
-                <p className="text-sm font-medium mb-2">By Protocol</p>
-                <div className="flex gap-2">
-                  {stats.by_protocol.map((p) => (
-                    <Badge key={p.protocol} variant="outline">
-                      {p.protocol}: {p.count}
+                <p className="text-sm font-medium mb-3">Protocols</p>
+                <div className="flex gap-2 flex-wrap">
+                  {stats.by_protocol.map((p, i) => (
+                    <Badge 
+                      key={p.protocol} 
+                      variant="outline" 
+                      className="cursor-pointer hover:bg-accent transition-colors animate-scale-in"
+                      style={{ animationDelay: `${(i + 9) * 50}ms` }}
+                      onClick={() => setProtocolFilter(p.protocol)}
+                    >
+                      {p.protocol}: <span className="font-mono ml-1">{p.count}</span>
                     </Badge>
                   ))}
                 </div>
@@ -544,26 +847,41 @@ export default function IPSMapPage() {
                 Live Events
                 {autoRefresh && (
                   <span className="relative flex h-2 w-2 ml-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-success"></span>
                   </span>
                 )}
               </CardTitle>
-              <Badge variant="secondary">{filteredEvents.length} events</Badge>
+              <Badge variant="secondary" className="font-mono">{filteredEvents.length} events</Badge>
             </div>
           </CardHeader>
           <CardContent>
-            <ScrollArea className="h-[300px]">
+            <ScrollArea className="h-[320px]">
               <div className="space-y-2">
-                {filteredEvents.map((event) => (
+                {filteredEvents.map((event, i) => (
                   <div
                     key={event.event_id}
-                    className="flex items-center gap-4 p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors"
+                    className={cn(
+                      "flex items-center gap-4 p-3 rounded-lg border bg-card hover:bg-accent/50 transition-all duration-200",
+                      newEventIds.has(event.event_id) && "animate-slide-in-right border-primary/50 bg-primary/5"
+                    )}
+                    style={{ animationDelay: `${i * 30}ms` }}
                   >
-                    <div
-                      className="w-2 h-2 rounded-full shrink-0"
-                      style={{ backgroundColor: severityColors[event.severity] }}
-                    />
+                    <div className="relative">
+                      <div
+                        className="w-3 h-3 rounded-full shrink-0"
+                        style={{ 
+                          backgroundColor: severityColors[event.severity],
+                          boxShadow: `0 0 8px ${severityColors[event.severity]}60`
+                        }}
+                      />
+                      {(event.severity === "critical" || event.severity === "high") && (
+                        <div
+                          className="absolute inset-0 rounded-full animate-ping"
+                          style={{ backgroundColor: severityColors[event.severity], opacity: 0.4 }}
+                        />
+                      )}
+                    </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate">{event.alert_name}</p>
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -576,7 +894,7 @@ export default function IPSMapPage() {
                       <Badge variant="outline" className="text-xs">
                         {event.protocol}
                       </Badge>
-                      <Badge variant="secondary" className="text-xs">
+                      <Badge variant="secondary" className="text-xs max-w-[100px] truncate">
                         {event.category.split(" ").slice(0, 2).join(" ")}
                       </Badge>
                     </div>
