@@ -189,51 +189,107 @@ const countryNames: Record<string, string> = {
   KR: "South Korea",
 };
 
-// Animated attack line component
+// Animated attack line with traveling particle effect
 function AnimatedAttackPath({ 
   path, 
-  index,
-  isNew 
 }: { 
   path: IPSPath; 
-  index: number;
+  index?: number;
   isNew?: boolean;
 }) {
+  const [visible, setVisible] = useState(true);
+  const [particleProgress, setParticleProgress] = useState(0);
   const color = severityColors[path.severity] || severityColors.medium;
   const glowColor = severityGlowColors[path.severity] || severityGlowColors.medium;
-  const animationDelay = index * 0.15;
   
-  // Calculate curved path control point for bezier
-  const midLon = (path.from.lon + path.to.lon) / 2;
-  const midLat = (path.from.lat + path.to.lat) / 2;
-  // Curve upward for visual effect
-  const curveOffset = Math.abs(path.from.lon - path.to.lon) * 0.15;
-  const controlLat = midLat + curveOffset;
+  // Memoize animation duration so it doesn't change on re-renders
+  const animationDuration = useMemo(() => 2000 + Math.random() * 1000, []);
+  
+  useEffect(() => {
+    let animationFrame: number;
+    let startTime: number;
+    
+    const animate = (timestamp: number) => {
+      if (!startTime) startTime = timestamp;
+      const elapsed = timestamp - startTime;
+      const progress = Math.min(elapsed / animationDuration, 1);
+      
+      setParticleProgress(progress);
+      
+      if (progress < 1) {
+        animationFrame = requestAnimationFrame(animate);
+      } else {
+        // Fade out after completing
+        setTimeout(() => setVisible(false), 300);
+      }
+    };
+    
+    animationFrame = requestAnimationFrame(animate);
+    
+    return () => {
+      if (animationFrame) cancelAnimationFrame(animationFrame);
+    };
+  }, [animationDuration]);
+
+  if (!visible) return null;
+
+  // Calculate current particle position along the path
+  const currentLon = path.from.lon + (path.to.lon - path.from.lon) * particleProgress;
+  const currentLat = path.from.lat + (path.to.lat - path.from.lat) * particleProgress;
+  
+  // Trail effect - show line from source to current particle position
+  const trailOpacity = particleProgress > 0.9 ? 1 - (particleProgress - 0.9) * 10 : 1;
 
   return (
-    <g className={cn(isNew && "animate-fade-in")} style={{ animationDelay: `${animationDelay}s` }}>
-      {/* Glow effect line */}
-      <Line
-        from={[path.from.lon, path.from.lat]}
-        to={[path.to.lon, path.to.lat]}
-        stroke={glowColor}
-        strokeWidth={4}
-        strokeLinecap="round"
-        style={{ filter: "blur(3px)" }}
-      />
-      {/* Main line */}
-      <Line
-        from={[path.from.lon, path.from.lat]}
-        to={[path.to.lon, path.to.lat]}
-        stroke={color}
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeDasharray="8,4"
-        className="animate-attack-dash"
-        style={{
-          animationDelay: `${animationDelay}s`,
-        }}
-      />
+    <g style={{ opacity: trailOpacity }}>
+      {/* Fading trail line from source to current position */}
+      {particleProgress > 0 && (
+        <>
+          {/* Glow effect trail */}
+          <Line
+            from={[path.from.lon, path.from.lat]}
+            to={[currentLon, currentLat]}
+            stroke={glowColor}
+            strokeWidth={3}
+            strokeLinecap="round"
+            style={{ filter: "blur(2px)", opacity: 0.6 }}
+          />
+          {/* Main trail line */}
+          <Line
+            from={[path.from.lon, path.from.lat]}
+            to={[currentLon, currentLat]}
+            stroke={color}
+            strokeWidth={1.5}
+            strokeLinecap="round"
+            style={{ opacity: 0.8 }}
+          />
+        </>
+      )}
+      
+      {/* Traveling particle (glowing dot) */}
+      {particleProgress > 0 && particleProgress < 1 && (
+        <Marker coordinates={[currentLon, currentLat]}>
+          <g>
+            {/* Outer glow */}
+            <circle
+              r={6}
+              fill={glowColor}
+              style={{ filter: "blur(3px)" }}
+            />
+            {/* Inner bright dot */}
+            <circle
+              r={3}
+              fill={color}
+              style={{ filter: `drop-shadow(0 0 4px ${color})` }}
+            />
+            {/* Center white dot */}
+            <circle
+              r={1.5}
+              fill="white"
+            />
+          </g>
+        </Marker>
+      )}
     </g>
   );
 }
@@ -342,6 +398,13 @@ function StatSummaryCard({
   );
 }
 
+// Track active attack animations with unique keys for continuous spawning
+interface ActiveAttack {
+  id: string;
+  path: IPSPath;
+  spawnTime: number;
+}
+
 export default function IPSMapPage() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [refreshInterval, setRefreshInterval] = useState(10);
@@ -349,6 +412,7 @@ export default function IPSMapPage() {
   const [countryFilter, setCountryFilter] = useState("all");
   const [protocolFilter, setProtocolFilter] = useState("all");
   const [newEventIds, setNewEventIds] = useState<Set<string>>(new Set());
+  const [activeAttacks, setActiveAttacks] = useState<ActiveAttack[]>([]);
 
   const { data: mapData, mutate: mutateMapData, isLoading: mapLoading } = useSWR<IPSMapDataResponse>(
     ["ips-map-data", severityFilter],
@@ -414,6 +478,46 @@ export default function IPSMapPage() {
   useWSSubscription("ips_event", handleWSUpdate);
 
   const paths = mapData?.paths || mockMapData.paths;
+  
+  // Continuously spawn attack animations when autoRefresh is on
+  useEffect(() => {
+    if (!autoRefresh) return;
+    
+    const spawnAttack = () => {
+      const availablePaths = severityFilter === "all" 
+        ? paths 
+        : paths.filter(p => p.severity === severityFilter);
+      
+      if (availablePaths.length === 0) return;
+      
+      // Pick a random path to animate
+      const randomPath = availablePaths[Math.floor(Math.random() * availablePaths.length)];
+      const newAttack: ActiveAttack = {
+        id: `attack-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        path: randomPath,
+        spawnTime: Date.now(),
+      };
+      
+      setActiveAttacks(prev => [...prev, newAttack]);
+      
+      // Remove attack after animation completes (4 seconds max)
+      setTimeout(() => {
+        setActiveAttacks(prev => prev.filter(a => a.id !== newAttack.id));
+      }, 4000);
+    };
+    
+    // Spawn initial attacks
+    for (let i = 0; i < 3; i++) {
+      setTimeout(() => spawnAttack(), i * 500);
+    }
+    
+    // Continue spawning at intervals (every 0.8-1.5 seconds)
+    const interval = setInterval(() => {
+      spawnAttack();
+    }, 800 + Math.random() * 700);
+    
+    return () => clearInterval(interval);
+  }, [autoRefresh, paths, severityFilter]);
   const events = liveEvents?.events || mockLiveEvents.events;
   const stats = statistics || mockStatistics;
   const summaryData = summary || mockSummary;
@@ -712,26 +816,24 @@ export default function IPSMapPage() {
                     }
                   </Geographies>
                   
-                  {/* Attack paths with animation */}
-                  {filteredPaths.map((path, i) => (
+                  {/* Active attack paths with traveling animation */}
+                  {activeAttacks.map((attack) => (
                     <AnimatedAttackPath 
-                      key={path.id} 
-                      path={path} 
-                      index={i}
-                      isNew={newEventIds.has(path.id)}
+                      key={attack.id} 
+                      path={attack.path} 
                     />
                   ))}
                   
-                  {/* Source markers */}
-                  {uniqueSources.map((path) => (
+                  {/* Source markers for active attacks */}
+                  {activeAttacks.map((attack) => (
                     <AnimatedMarker
-                      key={`src-${path.id}`}
-                      coordinates={[path.from.lon, path.from.lat]}
-                      severity={path.severity}
+                      key={`src-${attack.id}`}
+                      coordinates={[attack.path.from.lon, attack.path.from.lat]}
+                      severity={attack.path.severity}
                       isSource={true}
-                      isNew={newEventIds.has(path.id)}
-                      city={path.from.city}
-                      country={path.from.country}
+                      isNew={true}
+                      city={attack.path.from.city}
+                      country={attack.path.from.country}
                     />
                   ))}
                   
